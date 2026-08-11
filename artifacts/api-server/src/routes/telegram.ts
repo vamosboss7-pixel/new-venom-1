@@ -43,7 +43,13 @@ type DepositSession =
   | { step: "amount" }
   | { step: "transaction-id"; amount: number };
 
+type WithdrawalSession =
+  | { step: "amount" }
+  | { step: "phone"; amount: number }
+  | { step: "owner-name"; amount: number; phone: string };
+
 const depositSessions = new Map<number, DepositSession>();
+const withdrawalSessions = new Map<number, WithdrawalSession>();
 const TELEBIRR_ACCOUNT_NAME = "ካሸሪ dawit";
 const TELEBIRR_ACCOUNT_NUMBER = "0964846006";
 
@@ -171,6 +177,59 @@ async function sendContactPrompt(chatId: number) {
     chat_id: chatId,
     text: "ምዝገባን ለመጨረስ ከታች ያለውን ቁልፍ በመጫን የራስዎን Telegram contact ያጋሩ።",
     reply_markup: getContactKeyboard(),
+  });
+}
+
+async function sendWithdrawalAmountPrompt(chatId: number) {
+  withdrawalSessions.set(chatId, { step: "amount" });
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: "እባክዎን ማውጣት የሚፈልጉትን መጠን ከ100 ብር ጀምሮ ያስገቡ",
+  });
+}
+
+async function sendWithdrawalPhonePrompt(chatId: number, amount: number) {
+  withdrawalSessions.set(chatId, { step: "phone", amount });
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: "ገንዘብ የሚቀበሉበትን የቴሌብር ቁጥር ያስገቡ",
+  });
+}
+
+async function sendWithdrawalOwnerNamePrompt(chatId: number, amount: number, phone: string) {
+  withdrawalSessions.set(chatId, { step: "owner-name", amount, phone });
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: "የአካውንቱ ባለቤት ስም ያስገቡ",
+  });
+}
+
+async function submitWithdrawalRequest(
+  chatId: number,
+  user: TelegramUser | undefined,
+  amount: number,
+  phone: string,
+  ownerName: string,
+) {
+  const adminChatId = getAdminChatId();
+  if (!adminChatId) {
+    logger.error("TELEGRAM_ADMIN_CHAT_ID is not configured");
+    await telegramRequest("sendMessage", {
+      chat_id: chatId,
+      text: "የወጪ ጥያቄዎን ማስገባት አልተቻለም። እባክዎ ቆይተው እንደገና ይሞክሩ።",
+    });
+    return;
+  }
+
+  await telegramRequest("sendMessage", {
+    chat_id: adminChatId,
+    text: `💸 አዲስ የወጪ ጥያቄ\n\nተጠቃሚ: ${user?.first_name ?? "Unknown"}${user?.username ? ` (@${user.username})` : ""}\nTelegram ID: ${user?.id ?? "Unknown"}\nChat ID: ${chatId}\nመጠን: ${amount} ETB\nTelebirr ቁጥር: ${phone}\nየአካውንት ባለቤት: ${ownerName}`,
+  });
+  withdrawalSessions.delete(chatId);
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: "እንኳን ደስ አልዎት የወጪ ጥያቄዎ ወደ አድሚን ተልኳል።\nየቴሌብር መልዕክት በቅርቡ ይደርስዎታል።",
+    reply_markup: getMainKeyboard(),
   });
 }
 
@@ -313,6 +372,10 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
     await sendDepositPaymentOptions(message.chat.id);
     return;
   }
+  if (text === "💸 Withdraw" || text === "/withdraw") {
+    await sendWithdrawalAmountPrompt(message.chat.id);
+    return;
+  }
   if (text === "📝 Register" || text === "/register") {
     await sendContactPrompt(message.chat.id);
     return;
@@ -327,6 +390,48 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
       text: "እገዛ ለማግኘት የምናሌ አማራጮቹን ይጠቀሙ። ምዝገባ ለመጨረስ 📝 Register የሚለውን ይጫኑ።",
       reply_markup: getMainKeyboard(),
     });
+    return;
+  }
+
+  const withdrawalSession = withdrawalSessions.get(message.chat.id);
+  if (withdrawalSession?.step === "amount") {
+    const amount = Number(text);
+    if (!/^\d+$/.test(text) || !Number.isSafeInteger(amount) || amount < 100) {
+      await telegramRequest("sendMessage", {
+        chat_id: message.chat.id,
+        text: "እባክዎን ከ100 ብር ጀምሮ የሆነ መጠን በቁጥር ብቻ ያስገቡ።",
+      });
+      return;
+    }
+    await sendWithdrawalPhonePrompt(message.chat.id, amount);
+    return;
+  }
+  if (withdrawalSession?.step === "phone") {
+    if (!/^09\d{8}$/.test(text)) {
+      await telegramRequest("sendMessage", {
+        chat_id: message.chat.id,
+        text: "እባክዎን ትክክለኛ የTelebirr ቁጥር ያስገቡ። ምሳሌ: 0912345678",
+      });
+      return;
+    }
+    await sendWithdrawalOwnerNamePrompt(message.chat.id, withdrawalSession.amount, text);
+    return;
+  }
+  if (withdrawalSession?.step === "owner-name") {
+    if (text.length > 100) {
+      await telegramRequest("sendMessage", {
+        chat_id: message.chat.id,
+        text: "እባክዎን ትክክለኛ የአካውንት ባለቤት ስም ያስገቡ።",
+      });
+      return;
+    }
+    await submitWithdrawalRequest(
+      message.chat.id,
+      message.from,
+      withdrawalSession.amount,
+      withdrawalSession.phone,
+      text,
+    );
     return;
   }
 
@@ -436,6 +541,7 @@ export async function registerTelegramWebhook() {
           { command: "register", description: "Register" },
           { command: "play", description: "Play Bingo" },
           { command: "deposit", description: "Deposit" },
+          { command: "withdraw", description: "Withdraw" },
           { command: "help", description: "Support" },
         ],
       },
