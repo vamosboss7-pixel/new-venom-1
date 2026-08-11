@@ -134,11 +134,10 @@ function parseTelegramUser(initData: string) {
 function getMainKeyboard() {
   return {
     keyboard: [
-      [{ text: "🎮 ቢንጎ ተጫወት" }, { text: "🎁 ሽልማት እይ" }],
-      [{ text: "💰 ብር ለመጫን" }, { text: "💸 ወጪ ለመጠየቅ" }],
-      [{ text: "🔗 ግብዣ & እርዳታ" }, { text: "👤 መግባት & እርዳታ", request_contact: true }],
-      [{ text: "🆘 እርዳታ" }, { text: "🌍 ቋንቋ / Language" }],
-      [{ text: "📢 አዳዲስ ማስታወቂያ" }],
+      [{ text: "📝 Register", request_contact: true }, { text: "🎮 Play Bingo" }],
+      [{ text: "🎁 Promo Code" }, { text: "💰 Deposit" }],
+      [{ text: "💸 Withdraw" }, { text: "🔗 Invite & Earn" }],
+      [{ text: "👤 Profile & Account" }, { text: "🆘 Support" }],
     ],
     resize_keyboard: true,
     is_persistent: true,
@@ -162,7 +161,7 @@ function getPaymentMethodKeyboard() {
 async function sendWelcomeMessage(chatId: number, firstName?: string) {
   await telegramRequest("sendMessage", {
     chat_id: chatId,
-    text: `🎉 እንኳን ወደ Flash Bingo በደህና መጡ${firstName ? ` ${firstName}` : ""}! 🎰\n\nእባክዎ ለመመዝገብ "👤 መግባት & እርዳታ" የሚለውን ይጫኑ።\n\nከታች ያለውን ምናሌ በመጠቀም ጨዋታውን ይጀምሩ።`,
+    text: `🎉 እንኳን ወደ Flash Bingo በደህና መጡ${firstName ? ` ${firstName}` : ""}! 🎰\n\nለመመዝገብ "📝 Register" የሚለውን ይጫኑ።\n\nከታች ያለውን ምናሌ በመጠቀም ጨዋታውን ይጀምሩ።`,
     reply_markup: getMainKeyboard(),
   });
 }
@@ -306,15 +305,15 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
     await sendWelcomeMessage(message.chat.id, message.from?.first_name);
     return;
   }
-  if (text === "🎮 ቢንጎ ተጫወት" || text === "/play") {
+  if (text === "🎮 Play Bingo" || text === "/play") {
     await sendMiniAppLink(message.chat.id);
     return;
   }
-  if (text === "💰 ብር ለመጫን" || text === "/deposit") {
+  if (text === "💰 Deposit" || text === "/deposit") {
     await sendDepositPaymentOptions(message.chat.id);
     return;
   }
-  if (text === "👤 መግባት & እርዳታ" || text === "/register") {
+  if (text === "📝 Register" || text === "/register") {
     await sendContactPrompt(message.chat.id);
     return;
   }
@@ -322,10 +321,10 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
     await sendWelcomeMessage(message.chat.id, message.from?.first_name);
     return;
   }
-  if (text === "🆘 እርዳታ" || text === "/help") {
+  if (text === "🆘 Support" || text === "/help") {
     await telegramRequest("sendMessage", {
       chat_id: message.chat.id,
-      text: "እገዛ ለማግኘት የምናሌ አማራጮቹን ይጠቀሙ። ምዝገባ ለመጨረስ 👤 መግባት & እርዳታን ይጫኑ።",
+      text: "እገዛ ለማግኘት የምናሌ አማራጮቹን ይጠቀሙ። ምዝገባ ለመጨረስ 📝 Register የሚለውን ይጫኑ።",
       reply_markup: getMainKeyboard(),
     });
     return;
@@ -356,7 +355,7 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
     return;
   }
 
-  if (text === "🎁 ሽልማት እይ" || text === "💸 ወጪ ለመጠየቅ" || text === "🔗 ግብዣ & እርዳታ" || text === "🌍 ቋንቋ / Language" || text === "📢 አዳዲስ ማስታወቂያ") {
+  if (text === "🎁 Promo Code" || text === "💸 Withdraw" || text === "🔗 Invite & Earn" || text === "👤 Profile & Account") {
     await telegramRequest("sendMessage", {
       chat_id: message.chat.id,
       text: "ይህ አማራጭ በቅርቡ ይገኛል።",
@@ -434,10 +433,10 @@ export async function registerTelegramWebhook() {
       body: {
         commands: [
           { command: "start", description: "Flash Bingo ክፈት" },
-          { command: "register", description: "በcontact ተመዝገብ" },
-          { command: "play", description: "ጨዋታ ጀምር" },
-          { command: "deposit", description: "ሂሳብ ሙላ" },
-          { command: "help", description: "እገዛ አግኝ" },
+          { command: "register", description: "Register" },
+          { command: "play", description: "Play Bingo" },
+          { command: "deposit", description: "Deposit" },
+          { command: "help", description: "Support" },
         ],
       },
     },
