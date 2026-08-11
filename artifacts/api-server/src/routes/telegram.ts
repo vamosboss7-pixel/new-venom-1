@@ -38,6 +38,21 @@ type TelegramAuthPayload = {
   initData?: unknown;
 };
 
+type DepositSession =
+  | { step: "payment-method" }
+  | { step: "amount" }
+  | { step: "transaction-id"; amount: number };
+
+type WithdrawalSession =
+  | { step: "amount" }
+  | { step: "phone"; amount: number }
+  | { step: "owner-name"; amount: number; phone: string };
+
+const depositSessions = new Map<number, DepositSession>();
+const withdrawalSessions = new Map<number, WithdrawalSession>();
+const TELEBIRR_ACCOUNT_NAME = "ካሸሪ dawit";
+const TELEBIRR_ACCOUNT_NUMBER = "0964846006";
+
 function getBotToken() {
   const value = process.env["TELEGRAM_BOT_TOKEN"]?.trim();
   return value || undefined;
@@ -56,6 +71,11 @@ function getWebhookSecret() {
   if (!value) return undefined;
   if (/^[A-Za-z0-9_-]{1,256}$/.test(value)) return value;
   return createHash("sha256").update(value).digest("hex");
+}
+
+function getAdminChatId() {
+  const value = Number(process.env["TELEGRAM_ADMIN_CHAT_ID"]?.trim());
+  return Number.isSafeInteger(value) ? value : undefined;
 }
 
 function getWebhookUrl() {
@@ -120,11 +140,10 @@ function parseTelegramUser(initData: string) {
 function getMainKeyboard() {
   return {
     keyboard: [
-      [{ text: "🎮 ቢንጎ ተጫወት" }, { text: "🎁 ሽልማት እይ" }],
-      [{ text: "💰 ብር ለመጫን" }, { text: "💸 ወጪ ለመጠየቅ" }],
-      [{ text: "🔗 ግብዣ & እርዳታ" }, { text: "👤 መግባት & እርዳታ", request_contact: true }],
-      [{ text: "🆘 እርዳታ" }, { text: "🌍 ቋንቋ / Language" }],
-      [{ text: "📢 አዳዲስ ማስታወቂያ" }],
+      [{ text: "📝 Register", request_contact: true }, { text: "🎮 Play Bingo" }],
+      [{ text: "🎁 Promo Code" }, { text: "💰 Deposit" }],
+      [{ text: "💸 Withdraw" }, { text: "🔗 Invite & Earn" }],
+      [{ text: "👤 Profile & Account" }, { text: "🆘 Support" }],
     ],
     resize_keyboard: true,
     is_persistent: true,
@@ -139,10 +158,16 @@ function getContactKeyboard() {
   };
 }
 
+function getPaymentMethodKeyboard() {
+  return {
+    inline_keyboard: [[{ text: "ቴሌብር", callback_data: "deposit:telebirr" }]],
+  };
+}
+
 async function sendWelcomeMessage(chatId: number, firstName?: string) {
   await telegramRequest("sendMessage", {
     chat_id: chatId,
-    text: `🎉 እንኳን ወደ Flash Bingo በደህና መጡ${firstName ? ` ${firstName}` : ""}! 🎰\n\nእባክዎ ለመመዝገብ "👤 መግባት & እርዳታ" የሚለውን ይጫኑ።\n\nከታች ያለውን ምናሌ በመጠቀም ጨዋታውን ይጀምሩ።`,
+    text: `🎉 እንኳን ወደ Flash Bingo በደህና መጡ${firstName ? ` ${firstName}` : ""}! 🎰\n\nለመመዝገብ "📝 Register" የሚለውን ይጫኑ።\n\nከታች ያለውን ምናሌ በመጠቀም ጨዋታውን ይጀምሩ።`,
     reply_markup: getMainKeyboard(),
   });
 }
@@ -152,6 +177,127 @@ async function sendContactPrompt(chatId: number) {
     chat_id: chatId,
     text: "ምዝገባን ለመጨረስ ከታች ያለውን ቁልፍ በመጫን የራስዎን Telegram contact ያጋሩ።",
     reply_markup: getContactKeyboard(),
+  });
+}
+
+async function sendInviteMessage(chatId: number) {
+  const bot = await telegramRequest<{ username?: string }>("getMe", {});
+  if (!bot.username) {
+    logger.error("Telegram bot username is not available");
+    await telegramRequest("sendMessage", {
+      chat_id: chatId,
+      text: "የመጋበዣ ሊንክ ማመንጨት አልተቻለም። እባክዎ ቆይተው ይሞክሩ።",
+    });
+    return;
+  }
+
+  const inviteLink = new URL(`https://t.me/${bot.username}`);
+  inviteLink.searchParams.set("start", `re${chatId}`);
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: `🎉 ጋብዝ & አግኝ!\n\nጓደኞችዎን ይጋብዙ እና ለእያንዳንዱ ለጋበዙት ሰው የ20 ብር የPlay Wallet ስጦታ ያግኙ!\n\nየእርስዎ መጋበዣ ሊንክ፦\n${inviteLink.toString()}`,
+    reply_markup: getMainKeyboard(),
+  });
+}
+
+async function sendWithdrawalAmountPrompt(chatId: number) {
+  withdrawalSessions.set(chatId, { step: "amount" });
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: "እባክዎን ማውጣት የሚፈልጉትን መጠን ከ100 ብር ጀምሮ ያስገቡ",
+  });
+}
+
+async function sendWithdrawalPhonePrompt(chatId: number, amount: number) {
+  withdrawalSessions.set(chatId, { step: "phone", amount });
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: "ገንዘብ የሚቀበሉበትን የቴሌብር ቁጥር ያስገቡ",
+  });
+}
+
+async function sendWithdrawalOwnerNamePrompt(chatId: number, amount: number, phone: string) {
+  withdrawalSessions.set(chatId, { step: "owner-name", amount, phone });
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: "የአካውንቱ ባለቤት ስም ያስገቡ",
+  });
+}
+
+async function submitWithdrawalRequest(
+  chatId: number,
+  user: TelegramUser | undefined,
+  amount: number,
+  phone: string,
+  ownerName: string,
+) {
+  const adminChatId = getAdminChatId();
+  if (!adminChatId) {
+    logger.error("TELEGRAM_ADMIN_CHAT_ID is not configured");
+    await telegramRequest("sendMessage", {
+      chat_id: chatId,
+      text: "የወጪ ጥያቄዎን ማስገባት አልተቻለም። እባክዎ ቆይተው እንደገና ይሞክሩ።",
+    });
+    return;
+  }
+
+  await telegramRequest("sendMessage", {
+    chat_id: adminChatId,
+    text: `💸 አዲስ የወጪ ጥያቄ\n\nተጠቃሚ: ${user?.first_name ?? "Unknown"}${user?.username ? ` (@${user.username})` : ""}\nTelegram ID: ${user?.id ?? "Unknown"}\nChat ID: ${chatId}\nመጠን: ${amount} ETB\nTelebirr ቁጥር: ${phone}\nየአካውንት ባለቤት: ${ownerName}`,
+  });
+  withdrawalSessions.delete(chatId);
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: "እንኳን ደስ አልዎት የወጪ ጥያቄዎ ወደ አድሚን ተልኳል።\nየቴሌብር መልዕክት በቅርቡ ይደርስዎታል።",
+    reply_markup: getMainKeyboard(),
+  });
+}
+
+async function sendDepositPaymentOptions(chatId: number) {
+  depositSessions.set(chatId, { step: "payment-method" });
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: "💰 ሂሳብ ለመሙላት የሚጠቀሙበትን የክፍያ አማራጭ ይምረጡ፦",
+    reply_markup: getPaymentMethodKeyboard(),
+  });
+}
+
+async function sendTelebirrAmountPrompt(chatId: number) {
+  depositSessions.set(chatId, { step: "amount" });
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: "ቴሌብርን መርጠዋል\n\nእባክዎ መሙላት የሚፈልጉትን የገንዘብ መጠን በቁጥር ብቻ ያስገቡ (ከ 10 ብር ጀምሮ):",
+  });
+}
+
+async function sendTelebirrPaymentInstructions(chatId: number, amount: number) {
+  depositSessions.set(chatId, { step: "transaction-id", amount });
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: `መሙላት የፈለጉት መጠን: ${amount} ETB\n\nእባክዎ ከታች ወዳለው የTelebirr አካውንት ብሩን ያስገቡ።\nስም: ${TELEBIRR_ACCOUNT_NAME}\nአካውንት: ${TELEBIRR_ACCOUNT_NUMBER}\n\nከዚያም የትራንዛክሽን ቁጥሩን (Transaction ID) እዚህ ላይ ይፃፉልን። ጥያቄዎ በአጭር ጊዜ ውስጥ ይስተናገዳል።`,
+  });
+}
+
+async function submitDepositRequest(chatId: number, user: TelegramUser | undefined, amount: number, transactionId: string) {
+  const adminChatId = getAdminChatId();
+  if (!adminChatId) {
+    logger.error("TELEGRAM_ADMIN_CHAT_ID is not configured");
+    await telegramRequest("sendMessage", {
+      chat_id: chatId,
+      text: "የሂሳብ መሙያ ጥያቄዎን ማስገባት አልተቻለም። እባክዎ ቆይተው እንደገና ይሞክሩ።",
+    });
+    return;
+  }
+
+  await telegramRequest("sendMessage", {
+    chat_id: adminChatId,
+    text: `💰 አዲስ የቴሌብር ዲፖዚት ጥያቄ\n\nተጠቃሚ: ${user?.first_name ?? "Unknown"}${user?.username ? ` (@${user.username})` : ""}\nTelegram ID: ${user?.id ?? "Unknown"}\nChat ID: ${chatId}\nመጠን: ${amount} ETB\nTransaction ID: ${transactionId}`,
+  });
+  depositSessions.delete(chatId);
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: `✅ የ${amount} ETB የሂሳብ መሙያ ጥያቄዎ ወደአድሚን ተልኳል። አድሚኑ ሲያጸድቀው መልዕክት ይደርስዎታል።`,
+    reply_markup: getMainKeyboard(),
   });
 }
 
@@ -217,39 +363,133 @@ async function saveTelegramContact(message: NonNullable<TelegramUpdate["message"
 }
 
 async function handleTelegramUpdate(update: TelegramUpdate) {
+  const callbackQuery = update.callback_query;
+  if (callbackQuery) {
+    await telegramRequest("answerCallbackQuery", { callback_query_id: callbackQuery.id });
+    if (callbackQuery.data === "deposit:telebirr" && callbackQuery.message) {
+      await sendTelebirrAmountPrompt(callbackQuery.message.chat.id);
+    }
+    return;
+  }
+
   const message = update.message;
   if (message?.contact) {
     await saveTelegramContact(message);
     return;
   }
 
-  const text = message?.text;
+  const text = message?.text?.trim();
   if (!message || !text) return;
   if (text.startsWith("/start")) {
     await sendWelcomeMessage(message.chat.id, message.from?.first_name);
-  } else if (text === "🎮 ቢንጎ ተጫወት" || text === "/play") {
+    return;
+  }
+  if (text === "🎮 Play Bingo" || text === "/play") {
     await sendMiniAppLink(message.chat.id);
-  } else if (text === "👤 መግባት & እርዳታ" || text === "/register") {
+    return;
+  }
+  if (text === "💰 Deposit" || text === "/deposit") {
+    await sendDepositPaymentOptions(message.chat.id);
+    return;
+  }
+  if (text === "💸 Withdraw" || text === "/withdraw") {
+    await sendWithdrawalAmountPrompt(message.chat.id);
+    return;
+  }
+  if (text === "📝 Register" || text === "/register") {
     await sendContactPrompt(message.chat.id);
-  } else if (text === "/menu") {
+    return;
+  }
+  if (text === "🔗 Invite & Earn" || text === "/invite") {
+    await sendInviteMessage(message.chat.id);
+    return;
+  }
+  if (text === "/menu") {
     await sendWelcomeMessage(message.chat.id, message.from?.first_name);
-  } else if (text === "🆘 እርዳታ" || text === "/help") {
+    return;
+  }
+  if (text === "🆘 Support" || text === "/help") {
     await telegramRequest("sendMessage", {
       chat_id: message.chat.id,
-      text: "እገዛ ለማግኘት የምናሌ አማራጮቹን ይጠቀሙ። ምዝገባ ለመጨረስ 👤 መግባት & እርዳታን ይጫኑ።",
+      text: "ለእርዳታ ቴሌግራም ላይ @******bingosupport ያነጋግሩን።",
       reply_markup: getMainKeyboard(),
     });
-  } else if (text === "🎁 ሽልማት እይ" || text === "💰 ብር ለመጫን" || text === "💸 ወጪ ለመጠየቅ" || text === "🔗 ግብዣ & እርዳታ" || text === "🌍 ቋንቋ / Language" || text === "📢 አዳዲስ ማስታወቂያ") {
+    return;
+  }
+
+  const withdrawalSession = withdrawalSessions.get(message.chat.id);
+  if (withdrawalSession?.step === "amount") {
+    const amount = Number(text);
+    if (!/^\d+$/.test(text) || !Number.isSafeInteger(amount) || amount < 100) {
+      await telegramRequest("sendMessage", {
+        chat_id: message.chat.id,
+        text: "እባክዎን ከ100 ብር ጀምሮ የሆነ መጠን በቁጥር ብቻ ያስገቡ።",
+      });
+      return;
+    }
+    await sendWithdrawalPhonePrompt(message.chat.id, amount);
+    return;
+  }
+  if (withdrawalSession?.step === "phone") {
+    if (!/^09\d{8}$/.test(text)) {
+      await telegramRequest("sendMessage", {
+        chat_id: message.chat.id,
+        text: "እባክዎን ትክክለኛ የTelebirr ቁጥር ያስገቡ። ምሳሌ: 0912345678",
+      });
+      return;
+    }
+    await sendWithdrawalOwnerNamePrompt(message.chat.id, withdrawalSession.amount, text);
+    return;
+  }
+  if (withdrawalSession?.step === "owner-name") {
+    if (text.length > 100) {
+      await telegramRequest("sendMessage", {
+        chat_id: message.chat.id,
+        text: "እባክዎን ትክክለኛ የአካውንት ባለቤት ስም ያስገቡ።",
+      });
+      return;
+    }
+    await submitWithdrawalRequest(
+      message.chat.id,
+      message.from,
+      withdrawalSession.amount,
+      withdrawalSession.phone,
+      text,
+    );
+    return;
+  }
+
+  const session = depositSessions.get(message.chat.id);
+  if (session?.step === "amount") {
+    const amount = Number(text);
+    if (!/^\d+$/.test(text) || !Number.isSafeInteger(amount) || amount < 10) {
+      await telegramRequest("sendMessage", {
+        chat_id: message.chat.id,
+        text: "እባክዎ ከ10 ብር ጀምሮ የሆነ መጠን በቁጥር ብቻ ያስገቡ።",
+      });
+      return;
+    }
+    await sendTelebirrPaymentInstructions(message.chat.id, amount);
+    return;
+  }
+  if (session?.step === "transaction-id") {
+    if (text.length > 100) {
+      await telegramRequest("sendMessage", {
+        chat_id: message.chat.id,
+        text: "እባክዎ ትክክለኛ የTransaction ID ያስገቡ።",
+      });
+      return;
+    }
+    await submitDepositRequest(message.chat.id, message.from, session.amount, text);
+    return;
+  }
+
+  if (text === "🎁 Promo Code" || text === "👤 Profile & Account") {
     await telegramRequest("sendMessage", {
       chat_id: message.chat.id,
       text: "ይህ አማራጭ በቅርቡ ይገኛል።",
       reply_markup: getMainKeyboard(),
     });
-  }
-
-  const callbackQuery = update.callback_query;
-  if (callbackQuery) {
-    await telegramRequest("answerCallbackQuery", { callback_query_id: callbackQuery.id });
   }
 }
 
@@ -322,9 +562,12 @@ export async function registerTelegramWebhook() {
       body: {
         commands: [
           { command: "start", description: "Flash Bingo ክፈት" },
-          { command: "register", description: "በcontact ተመዝገብ" },
-          { command: "play", description: "ጨዋታ ጀምር" },
-          { command: "help", description: "እገዛ አግኝ" },
+          { command: "register", description: "Register" },
+          { command: "play", description: "Play Bingo" },
+          { command: "deposit", description: "Deposit" },
+          { command: "withdraw", description: "Withdraw" },
+          { command: "invite", description: "Invite & Earn" },
+          { command: "help", description: "Support" },
         ],
       },
     },
