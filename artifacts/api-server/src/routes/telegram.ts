@@ -180,6 +180,26 @@ async function sendContactPrompt(chatId: number) {
   });
 }
 
+async function sendInviteMessage(chatId: number) {
+  const bot = await telegramRequest<{ username?: string }>("getMe", {});
+  if (!bot.username) {
+    logger.error("Telegram bot username is not available");
+    await telegramRequest("sendMessage", {
+      chat_id: chatId,
+      text: "የመጋበዣ ሊንክ ማመንጨት አልተቻለም። እባክዎ ቆይተው ይሞክሩ።",
+    });
+    return;
+  }
+
+  const inviteLink = new URL(`https://t.me/${bot.username}`);
+  inviteLink.searchParams.set("start", `re${chatId}`);
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: `🎉 ጋብዝ & አግኝ!\n\nጓደኞችዎን ይጋብዙ እና ለእያንዳንዱ ለጋበዙት ሰው የ20 ብር የPlay Wallet ስጦታ ያግኙ!\n\nየእርስዎ መጋበዣ ሊንክ፦\n${inviteLink.toString()}`,
+    reply_markup: getMainKeyboard(),
+  });
+}
+
 async function sendWithdrawalAmountPrompt(chatId: number) {
   withdrawalSessions.set(chatId, { step: "amount" });
   await telegramRequest("sendMessage", {
@@ -380,6 +400,10 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
     await sendContactPrompt(message.chat.id);
     return;
   }
+  if (text === "🔗 Invite & Earn" || text === "/invite") {
+    await sendInviteMessage(message.chat.id);
+    return;
+  }
   if (text === "/menu") {
     await sendWelcomeMessage(message.chat.id, message.from?.first_name);
     return;
@@ -460,7 +484,7 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
     return;
   }
 
-  if (text === "🎁 Promo Code" || text === "💸 Withdraw" || text === "🔗 Invite & Earn" || text === "👤 Profile & Account") {
+  if (text === "🎁 Promo Code" || text === "👤 Profile & Account") {
     await telegramRequest("sendMessage", {
       chat_id: message.chat.id,
       text: "ይህ አማራጭ በቅርቡ ይገኛል።",
@@ -542,6 +566,7 @@ export async function registerTelegramWebhook() {
           { command: "play", description: "Play Bingo" },
           { command: "deposit", description: "Deposit" },
           { command: "withdraw", description: "Withdraw" },
+          { command: "invite", description: "Invite & Earn" },
           { command: "help", description: "Support" },
         ],
       },
