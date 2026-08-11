@@ -411,7 +411,7 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
   if (text === "🆘 Support" || text === "/help") {
     await telegramRequest("sendMessage", {
       chat_id: message.chat.id,
-      text: "እገዛ ለማግኘት የምናሌ አማራጮቹን ይጠቀሙ። ምዝገባ ለመጨረስ 📝 Register የሚለውን ይጫኑ።",
+      text: "ለእርዳታ ቴሌግራም ላይ @******bingosupport ያነጋግሩን።",
       reply_markup: getMainKeyboard(),
     });
     return;
